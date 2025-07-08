@@ -1,0 +1,16 @@
+artifact_uri: mlflow-artifacts:/704022569385711299/25d5e2f484be40838d0f55e268bd68e8/artifacts
+deleted_time: 1750964134459
+end_time: 1750963825481
+entry_point_name: ''
+experiment_id: '704022569385711299'
+lifecycle_stage: deleted
+run_id: 25d5e2f484be40838d0f55e268bd68e8
+run_name: colorful-midge-419
+run_uuid: 25d5e2f484be40838d0f55e268bd68e8
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1750963825329
+status: 3
+tags: []
+user_id: kau75421

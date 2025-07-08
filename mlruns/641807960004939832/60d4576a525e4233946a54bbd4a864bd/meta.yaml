@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/641807960004939832/60d4576a525e4233946a54bbd4a864bd/artifacts
+end_time: 1750972053172
+entry_point_name: ''
+experiment_id: '641807960004939832'
+lifecycle_stage: active
+run_id: 60d4576a525e4233946a54bbd4a864bd
+run_name: dapper-midge-943
+run_uuid: 60d4576a525e4233946a54bbd4a864bd
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1750972053033
+status: 3
+tags: []
+user_id: root

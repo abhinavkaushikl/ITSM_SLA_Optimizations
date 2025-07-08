@@ -1,0 +1,16 @@
+artifact_uri: mlflow-artifacts:/641807960004939832/270b31fda1e74f56bd0434b6a916f6a4/artifacts
+deleted_time: 1750966586146
+end_time: 1750965031532
+entry_point_name: ''
+experiment_id: '641807960004939832'
+lifecycle_stage: deleted
+run_id: 270b31fda1e74f56bd0434b6a916f6a4
+run_name: likeable-ray-228
+run_uuid: 270b31fda1e74f56bd0434b6a916f6a4
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1750965031430
+status: 4
+tags: []
+user_id: kau75421

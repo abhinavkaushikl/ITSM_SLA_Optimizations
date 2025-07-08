@@ -1,0 +1,16 @@
+artifact_uri: mlflow-artifacts:/641807960004939832/cbe12081dc15421596e3b12a817dd205/artifacts
+deleted_time: 1750971698734
+end_time: 1750971650126
+entry_point_name: ''
+experiment_id: '641807960004939832'
+lifecycle_stage: deleted
+run_id: cbe12081dc15421596e3b12a817dd205
+run_name: illustrious-hog-267
+run_uuid: cbe12081dc15421596e3b12a817dd205
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1750971650018
+status: 3
+tags: []
+user_id: root

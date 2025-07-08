@@ -1,0 +1,6 @@
+data:
+  raw_data_path: "C:/Users/kau75421/ITSM SLA Optimzers/raw/itsm_sla_tickets_dataset_extended.csv"
+  processed_data_path: "C:/Users/kau75421/ITSM SLA Optimzers/processed/itsm_sla_tickets_dataset_processed.csv"
+  logs_dir: "C:/Users/kau75421/ITSM SLA Optimzers/logs"
+  models_dir: "C:/Users/kau75421/ITSM SLA Optimzers/models"
+  artifacts_dir: "C:/Users/kau75421/LLMprojects/ITSM/data/artifacts"

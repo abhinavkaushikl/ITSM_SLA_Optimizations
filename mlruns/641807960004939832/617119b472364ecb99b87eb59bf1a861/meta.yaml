@@ -1,0 +1,16 @@
+artifact_uri: mlflow-artifacts:/641807960004939832/617119b472364ecb99b87eb59bf1a861/artifacts
+deleted_time: 1750971698734
+end_time: 1750971615493
+entry_point_name: ''
+experiment_id: '641807960004939832'
+lifecycle_stage: deleted
+run_id: 617119b472364ecb99b87eb59bf1a861
+run_name: vaunted-yak-759
+run_uuid: 617119b472364ecb99b87eb59bf1a861
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1750971615399
+status: 3
+tags: []
+user_id: root
