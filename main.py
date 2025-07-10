@@ -6,14 +6,84 @@ import traceback
 from typing import List, Dict, Any
 import pandas as pd
 import numpy as np
+import os
 
-# Load model
-try:
-    model = joblib.load("models/best_rf_model.pkl")
-    print(" Model loaded successfully")
-except Exception as e:
-    print(f" Failed to load model: {e}")
-    model = None
+# Enhanced model loading function
+def load_model_safely(model_path="models/best_rf_model.pkl"):
+    """
+    Safely load model from pickle file, handling both dict and direct model formats
+    """
+    try:
+        print(f"🔍 Loading model from: {model_path}")
+        
+        if not os.path.exists(model_path):
+            print(f"❌ Model file not found: {model_path}")
+            return None
+            
+        loaded_data = joblib.load(model_path)
+        print(f"📦 Loaded data type: {type(loaded_data)}")
+        
+        # Check if it's a dictionary containing the model
+        if isinstance(loaded_data, dict):
+            print(f"📋 Dictionary keys: {list(loaded_data.keys())}")
+            
+            # Try different possible keys where the model might be stored
+            possible_keys = ['model', 'best_model', 'trained_model', 'classifier', 'estimator']
+            
+            for key in possible_keys:
+                if key in loaded_data:
+                    model = loaded_data[key]
+                    if hasattr(model, 'predict'):
+                        print(f"✅ Found model in key '{key}': {type(model).__name__}")
+                        return model
+                    else:
+                        print(f"⚠️ Object in key '{key}' is not a model: {type(model)}")
+            
+            # If no standard keys found, look for any object with predict method
+            for key, value in loaded_data.items():
+                if hasattr(value, 'predict'):
+                    print(f"✅ Found model-like object in key '{key}': {type(value).__name__}")
+                    return value
+            
+            print(f"❌ No model found in dictionary")
+            return None
+        
+        # Check if it's directly a model
+        elif hasattr(loaded_data, 'predict'):
+            print(f"✅ Loaded direct model: {type(loaded_data).__name__}")
+            return loaded_data
+        
+        else:
+            print(f"❌ Loaded object is not a model: {type(loaded_data)}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error loading model from {model_path}: {e}")
+        return None
+
+# Load model with fallback options
+model = None
+model_paths = [
+    "models/best_rf_model.pkl",
+    "models/best_xgb_model.pkl", 
+    "models/rf_model.pkl",
+    "models/xgb_model.pkl"
+]
+
+for path in model_paths:
+    if os.path.exists(path):
+        model = load_model_safely(path)
+        if model is not None:
+            print(f"✅ Model loaded successfully from {path}: {type(model).__name__}")
+            break
+        else:
+            print(f"⚠️ Failed to load model from {path}")
+
+if model is None:
+    print("❌ No model could be loaded from any path")
+else:
+    print(f"🎯 Final model type: {type(model).__name__}")
+    print(f"📋 Model methods: predict={hasattr(model, 'predict')}, predict_proba={hasattr(model, 'predict_proba')}")
 
 app = FastAPI(
     title="SLA Breach Prediction API",
@@ -46,6 +116,16 @@ def convert_numpy_types(obj):
     else:
         return obj
 
+def validate_model():
+    """Validate that model is loaded and functional"""
+    if model is None:
+        raise HTTPException(status_code=500, detail="Model not loaded. Please check model files.")
+    
+    if not hasattr(model, 'predict'):
+        raise HTTPException(status_code=500, detail="Loaded model doesn't have predict method")
+    
+    return True
+
 class Ticket(BaseModel):
     created_date: str = "2024-01-15 10:30:00"
     incident_type: str = "Incident"
@@ -74,7 +154,8 @@ def read_root():
     return {
         "message": "Conservative SLA Breach Prediction API",
         "model_loaded": model is not None,
-        "status": "ready",
+        "model_type": type(model).__name__ if model else "None",
+        "status": "ready" if model else "model_not_loaded",
         "version": "2.0.0",
         "threshold": "75% (Conservative)",
         "preprocessing": "Uses training pipeline preprocessing",
@@ -94,8 +175,7 @@ def read_root():
 @app.get("/test")
 def test_endpoint():
     """Basic test endpoint with conservative threshold"""
-    if model is None:
-        raise HTTPException(status_code=500, detail="Model not loaded")
+    validate_model()
     
     try:
         from Inference_pipeline import predict_with_full_analysis
@@ -122,7 +202,7 @@ def test_endpoint():
             "problem_ticket_linked": "No"
         }
         
-        print(" Starting conservative threshold test...")
+        print("🧪 Starting conservative threshold test...")
         
         # Use the new full analysis function
         analysis = predict_with_full_analysis(model, test_data, threshold=0.75)
@@ -131,25 +211,31 @@ def test_endpoint():
             "test_data": test_data,
             "analysis": analysis,
             "message": "Conservative threshold test successful",
-            "threshold_used": 0.75
+            "threshold_used": 0.75,
+            "model_info": {
+                "type": type(model).__name__,
+                "has_predict_proba": hasattr(model, 'predict_proba')
+            }
         }
         
         return convert_numpy_types(result)
         
     except Exception as e:
         error_details = traceback.format_exc()
-        print(f"Test error: {error_details}")
-        return {
-            "error": str(e),
-            "message": "Conservative test failed",
-            "details": error_details.split('\n')[-3:-1]
-        }
+        print(f"❌ Test error: {error_details}")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "error": str(e),
+                "message": "Conservative test failed",
+                "details": error_details.split('\n')[-3:-1]
+            }
+        )
 
 @app.get("/test/additional-no-breach")
 def additional_no_breach_test():
     """Test conservative threshold with scenarios that should NOT breach SLA"""
-    if model is None:
-        raise HTTPException(status_code=500, detail="Model not loaded")
+    validate_model()
     
     no_breach_scenarios = [
         {
@@ -237,8 +323,8 @@ def additional_no_breach_test():
                 
                 # Use conservative threshold analysis
                 analysis = predict_with_full_analysis(
-                    model, 
-                    scenario['data'], 
+                    model,
+                    scenario['data'],
                     threshold=0.75
                 )
                 
@@ -275,9 +361,10 @@ def additional_no_breach_test():
                 }
                 
                 results.append(result_item)
+                print(f"✅ {scenario['name']}: Conservative={conservative_prediction}, Standard={standard_prediction}")
                 
             except Exception as e:
-                print(f" Scenario failed: {scenario['name']} - {e}")
+                print(f"❌ Scenario failed: {scenario['name']} - {e}")
                 results.append({
                     "scenario": scenario['name'],
                     "error": str(e),
@@ -295,7 +382,8 @@ def additional_no_breach_test():
             "test_info": {
                 "threshold_used": 0.75,
                 "test_type": "Conservative No-Breach Scenarios",
-                "total_scenarios": len(no_breach_scenarios)
+                "total_scenarios": len(no_breach_scenarios),
+                "model_type": type(model).__name__
             },
             "results": results,
             "analysis": {
@@ -306,7 +394,7 @@ def additional_no_breach_test():
                 "standard_no_breach_count": len(standard_no_breach),
                 "false_positive_reduction_count": len(false_positive_reduction),
                 "average_probability": round(
-                    sum(r.get('probability', 0) for r in successful_tests) / max(len(successful_tests), 1), 3
+                    sum(r.get('probability', 0) for r in successful_tests if r.get('probability') is not None) / max(len(successful_tests), 1), 3
                 )
             },
             "threshold_benefits": {
@@ -318,7 +406,7 @@ def additional_no_breach_test():
             "summary": {
                 "correctly_predicted_no_breach": [r['scenario'] for r in conservative_no_breach],
                 "false_positive_reductions": [r['scenario'] for r in false_positive_reduction],
-                "risk_levels": {level: len([r for r in successful_tests if r.get('risk_level') == level]) 
+                "risk_levels": {level: len([r for r in successful_tests if r.get('risk_level') == level])
                               for level in ['VERY LOW', 'LOW', 'MEDIUM', 'MEDIUM-HIGH', 'HIGH', 'CRITICAL']},
                 "model_performance": "Conservative threshold reduces false positives while maintaining accuracy"
             }
@@ -328,14 +416,16 @@ def additional_no_breach_test():
         
     except Exception as e:
         error_details = traceback.format_exc()
-        print(f" Additional no-breach test failed: {error_details}")
-        raise HTTPException(status_code=500, detail=f"Conservative test failed: {str(e)}")
+        print(f"❌ Additional no-breach test failed: {error_details}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Conservative test failed: {str(e)}"
+        )
 
 @app.post("/predict")
 def predict(ticket: Ticket):
     """Predict SLA breach with conservative 75% threshold"""
-    if model is None:
-        raise HTTPException(status_code=500, detail="Model not loaded")
+    validate_model()
     
     try:
         from Inference_pipeline import predict_with_full_analysis
@@ -357,6 +447,10 @@ def predict(ticket: Ticket):
             "conservative_benefits": {
                 "reduced_false_positives": analysis['predictions']['standard_prediction'] == 1 and analysis['predictions']['conservative_prediction'] == 0,
                 "higher_confidence": "Only predicts breach when ≥75% confident"
+            },
+            "model_info": {
+                "type": type(model).__name__,
+                "has_predict_proba": hasattr(model, 'predict_proba')
             }
         }
         
@@ -364,14 +458,16 @@ def predict(ticket: Ticket):
         
     except Exception as e:
         error_details = traceback.format_exc()
-        print(f" Prediction error: {error_details}")
-        raise HTTPException(status_code=500, detail=f"Conservative prediction failed: {str(e)}")
+        print(f"❌ Prediction error: {error_details}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Conservative prediction failed: {str(e)}"
+        )
 
 @app.post("/predict/batch")
 def predict_batch(batch_data: BatchTickets):
     """Batch prediction with conservative threshold"""
-    if model is None:
-        raise HTTPException(status_code=500, detail="Model not loaded")
+    validate_model()
     
     tickets = batch_data.tickets
     
@@ -447,31 +543,36 @@ def predict_batch(batch_data: BatchTickets):
                 "standard_breach_rate": round(processing_stats["standard_breach"] / max(processing_stats["successful"], 1) * 100, 1),
                 "false_positive_reduction": processing_stats["false_positive_reduction"],
                 "alert_reduction_percentage": round(
-                    (processing_stats["standard_breach"] - processing_stats["conservative_breach"]) / 
+                    (processing_stats["standard_breach"] - processing_stats["conservative_breach"]) /
                     max(processing_stats["standard_breach"], 1) * 100, 1
                 ),
                 "average_probability": round(
-                    sum(r.get('probability', 0) for r in results if r['status'] == 'success') / 
+                    sum(r.get('probability', 0) for r in results if r['status'] == 'success' and r.get('probability') is not None) /
                     max(processing_stats["successful"], 1), 3
                 )
             },
             "summary": {
                 "total_alerts_reduced": processing_stats["standard_breach"] - processing_stats["conservative_breach"],
                 "risk_distribution": processing_stats["risk_levels"],
-                "model_performance": "Conservative threshold significantly reduces false positives"
+                "model_performance": "Conservative threshold significantly reduces false positives",
+                "model_type": type(model).__name__
             }
         }
         
         return convert_numpy_types(final_result)
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Batch prediction failed: {str(e)}")
+        error_details = traceback.format_exc()
+        print(f"❌ Batch prediction error: {error_details}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Batch prediction failed: {str(e)}"
+        )
 
 @app.get("/model/info")
 def model_info():
     """Get information about the conservative model"""
-    if model is None:
-        raise HTTPException(status_code=500, detail="Model not loaded")
+    validate_model()
     
     try:
         model_type = type(model).__name__
@@ -490,7 +591,8 @@ def model_info():
                 "has_predict_proba": hasattr(model, 'predict_proba'),
                 "has_feature_importances": hasattr(model, 'feature_importances_')
             },
-            "api_version": "2.0.0 - Conservative Threshold"
+            "api_version": "2.0.0 - Conservative Threshold",
+            "model_methods": [method for method in dir(model) if not method.startswith('_') and callable(getattr(model, method))][:15]
         }
         
         return convert_numpy_types(result)
@@ -502,6 +604,20 @@ def model_info():
             "error": str(e)
         }
 
+@app.get("/health")
+def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "model_loaded": model is not None,
+        "model_type": type(model).__name__ if model else "None",
+        "api_version": "2.0.0"
+    }
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="localhost", port=8000)
+    print(f"🚀 Starting API server...")
+    print(f"📊 Model status: {'Loaded' if model else 'Not loaded'}")
+    if model:
+        print(f"🎯 Model type: {type(model).__name__}")
+    uvicorn.run(app, host="localhost", port=5000)

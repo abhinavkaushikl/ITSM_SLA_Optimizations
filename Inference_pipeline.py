@@ -6,6 +6,7 @@ from features.leakageandsmote import LeakyFeatureRemover
 import json
 import os
 import numpy as np
+import joblib
 
 def load_expected_features():
     """Load the feature names that were saved during training"""
@@ -13,7 +14,61 @@ def load_expected_features():
         with open("models/feature_columns.json", "r") as f:
             return json.load(f)
     except FileNotFoundError:
-        print("Feature columns file not found. Run training pipeline first.")
+        print("❌ Feature columns file not found. Run training pipeline first.")
+        return None
+
+def load_model_safely(model_path="models/best_rf_model.pkl"):
+    """
+    Safely load model from pickle file, handling both dict and direct model formats
+    """
+    try:
+        print(f"🔍 Loading model from: {model_path}")
+        loaded_data = joblib.load(model_path)
+        
+        print(f"📦 Loaded data type: {type(loaded_data)}")
+        
+        # Check if it's a dictionary containing the model
+        if isinstance(loaded_data, dict):
+            print(f"📋 Dictionary keys: {list(loaded_data.keys())}")
+            
+            # Try different possible keys where the model might be stored
+            possible_keys = ['model', 'best_model', 'trained_model', 'classifier', 'estimator']
+            
+            for key in possible_keys:
+                if key in loaded_data:
+                    model = loaded_data[key]
+                    if hasattr(model, 'predict'):
+                        print(f"✅ Found model in key '{key}': {type(model).__name__}")
+                        return model
+                    else:
+                        print(f"⚠️ Object in key '{key}' is not a model: {type(model)}")
+            
+            # If no standard keys found, look for any object with predict method
+            for key, value in loaded_data.items():
+                if hasattr(value, 'predict'):
+                    print(f"✅ Found model-like object in key '{key}': {type(value).__name__}")
+                    return value
+            
+            print(f"❌ No model found in dictionary. Available keys: {list(loaded_data.keys())}")
+            return None
+        
+        # Check if it's directly a model
+        elif hasattr(loaded_data, 'predict'):
+            print(f"✅ Loaded direct model: {type(loaded_data).__name__}")
+            return loaded_data
+        
+        else:
+            print(f"❌ Loaded object is not a model: {type(loaded_data)}")
+            print(f"📋 Object attributes: {[attr for attr in dir(loaded_data) if not attr.startswith('_')][:10]}")
+            return None
+            
+    except FileNotFoundError:
+        print(f"❌ Model file not found: {model_path}")
+        return None
+    except Exception as e:
+        print(f"❌ Error loading model from {model_path}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def create_minimal_dataframe(ticket_data):
@@ -77,10 +132,10 @@ def safe_preprocessing_step(step_name, func, *args, **kwargs):
     try:
         print(f"   {step_name}...")
         result = func(*args, **kwargs)
-        print(f"    {step_name} completed")
+        print(f"   ✅ {step_name} completed")
         return result
     except Exception as e:
-        print(f"    {step_name} failed: {e}")
+        print(f"   ❌ {step_name} failed: {e}")
         raise
 
 def run_inference_preprocessing(df):
@@ -161,15 +216,28 @@ def align_features_with_training(X, expected_features):
             aligned_df[col] = X[col]
             matched_features += 1
         else:
-            print(f"  Feature '{col}' not in training features, skipping...")
+            print(f"   ⚠️ Feature '{col}' not in training features, skipping...")
     
     # Report alignment results
     missing_features = set(expected_features) - set(X.columns)
-    print(f"   Matched features: {matched_features}/{len(expected_features)}")
-    print(f"    Missing features filled with 0: {len(missing_features)}")
-    print(f"   Final feature shape: {aligned_df.shape}")
+    print(f"   📊 Matched features: {matched_features}/{len(expected_features)}")
+    print(f"   📝 Missing features filled with 0: {len(missing_features)}")
+    print(f"   ✅ Final feature shape: {aligned_df.shape}")
     
     return aligned_df
+
+def validate_model(model):
+    """
+    Validate that the model has required methods
+    """
+    if model is None:
+        raise ValueError("❌ Model is None")
+    
+    if not hasattr(model, 'predict'):
+        raise ValueError(f"❌ Model {type(model)} doesn't have predict method")
+    
+    print(f"✅ Model validation passed: {type(model).__name__}")
+    return True
 
 def predict_with_conservative_threshold(model, X, threshold=0.75):
     """
@@ -185,39 +253,49 @@ def predict_with_conservative_threshold(model, X, threshold=0.75):
     - probabilities: Raw probabilities from the model
     - threshold_info: Information about the threshold used
     """
-    print(f" Making predictions with {threshold*100}% confidence threshold...")
+    print(f"🎯 Making predictions with {threshold*100}% confidence threshold...")
+    
+    # Validate model first
+    validate_model(model)
     
     if hasattr(model, 'predict_proba'):
-        probabilities = model.predict_proba(X)[:, 1]
-        predictions = (probabilities >= threshold).astype(int)
-        
-        # Calculate prediction statistics
-        total_predictions = len(predictions)
-        breach_predictions = np.sum(predictions)
-        standard_predictions = np.sum(model.predict(X))
-        
-        threshold_info = {
-            'threshold_used': threshold,
-            'total_predictions': total_predictions,
-            'breach_predictions_conservative': int(breach_predictions),
-            'breach_predictions_standard': int(standard_predictions),
-            'reduction_in_alerts': int(standard_predictions - breach_predictions),
-            'alert_reduction_percentage': round(((standard_predictions - breach_predictions) / max(standard_predictions, 1)) * 100, 1),
-            'average_probability': float(np.mean(probabilities)),
-            'max_probability': float(np.max(probabilities)),
-            'min_probability': float(np.min(probabilities))
-        }
-        
-        print(f"    Conservative predictions: {breach_predictions}/{total_predictions}")
-        print(f"    Standard predictions: {standard_predictions}/{total_predictions}")
-        print(f"    Alert reduction: {threshold_info['alert_reduction_percentage']}%")
-        
-        return predictions, probabilities, threshold_info
+        try:
+            probabilities = model.predict_proba(X)[:, 1]
+            predictions = (probabilities >= threshold).astype(int)
+            
+            # Calculate prediction statistics
+            total_predictions = len(predictions)
+            breach_predictions = np.sum(predictions)
+            standard_predictions = np.sum(model.predict(X))
+            
+            threshold_info = {
+                'threshold_used': threshold,
+                'total_predictions': total_predictions,
+                'breach_predictions_conservative': int(breach_predictions),
+                'breach_predictions_standard': int(standard_predictions),
+                'reduction_in_alerts': int(standard_predictions - breach_predictions),
+                'alert_reduction_percentage': round(((standard_predictions - breach_predictions) / max(standard_predictions, 1)) * 100, 1),
+                'average_probability': float(np.mean(probabilities)),
+                'max_probability': float(np.max(probabilities)),
+                'min_probability': float(np.min(probabilities))
+            }
+            
+            print(f"   📊 Conservative predictions: {breach_predictions}/{total_predictions}")
+            print(f"   📊 Standard predictions: {standard_predictions}/{total_predictions}")
+            print(f"   📉 Alert reduction: {threshold_info['alert_reduction_percentage']}%")
+            
+            return predictions, probabilities, threshold_info
+            
+        except Exception as e:
+            print(f"   ❌ predict_proba failed: {e}")
+            # Fallback to standard predict
+            predictions = model.predict(X)
+            return predictions, None, {'threshold_used': 0.5, 'note': f'predict_proba failed: {e}'}
     else:
         # Fallback for models without predict_proba
-        print("    Model doesn't support predict_proba, using standard predictions")
+        print("   ⚠️ Model doesn't support predict_proba, using standard predictions")
         predictions = model.predict(X)
-        return predictions, None, {'threshold_used': 0.5, 'note': 'Standard threshold used'}
+        return predictions, None, {'threshold_used': 0.5, 'note': 'Standard threshold used - no predict_proba'}
 
 def get_risk_assessment(probability, threshold=0.75):
     """
@@ -230,39 +308,43 @@ def get_risk_assessment(probability, threshold=0.75):
     Returns:
     - risk_info: Dictionary with risk level and recommendations
     """
+    # Handle case where probability is None (no predict_proba)
+    if probability is None:
+        probability = 0.5  # Default neutral probability
+    
     if probability >= 0.95:
         risk_level = "CRITICAL"
-        recommendation = " IMMEDIATE ESCALATION REQUIRED - Very high breach probability"
+        recommendation = "🚨 IMMEDIATE ESCALATION REQUIRED - Very high breach probability"
         priority = "P0"
     elif probability >= threshold:
         risk_level = "HIGH"
-        recommendation = " PRIORITY HANDLING - Exceeds confidence threshold"
+        recommendation = "⚠️ PRIORITY HANDLING - Exceeds confidence threshold"
         priority = "P1"
     elif probability >= 0.6:
         risk_level = "MEDIUM-HIGH"
-        recommendation = " MONITOR CLOSELY - Approaching threshold"
+        recommendation = "📋 MONITOR CLOSELY - Approaching threshold"
         priority = "P2"
     elif probability >= 0.4:
         risk_level = "MEDIUM"
-        recommendation = " STANDARD MONITORING - Moderate risk"
+        recommendation = "👀 STANDARD MONITORING - Moderate risk"
         priority = "P3"
     elif probability >= 0.2:
         risk_level = "LOW"
-        recommendation = " STANDARD PROCESSING - Low risk"
+        recommendation = "✅ STANDARD PROCESSING - Low risk"
         priority = "P4"
     else:
         risk_level = "VERY LOW"
-        recommendation = " ROUTINE PROCESSING - Very low risk"
+        recommendation = "✅ ROUTINE PROCESSING - Very low risk"
         priority = "P4"
     
     return {
         'risk_level': risk_level,
         'recommendation': recommendation,
         'suggested_priority': priority,
-        'probability': float(probability),
+        'probability': float(probability) if probability is not None else None,
         'threshold': threshold,
-        'exceeds_threshold': probability >= threshold,
-        'confidence_gap': float(probability - threshold) if probability >= threshold else float(threshold - probability)
+        'exceeds_threshold': probability >= threshold if probability is not None else False,
+        'confidence_gap': float(probability - threshold) if probability is not None and probability >= threshold else float(threshold - probability) if probability is not None else 0
     }
 
 def preprocess_for_prediction(ticket_data):
@@ -270,32 +352,31 @@ def preprocess_for_prediction(ticket_data):
     Complete preprocessing pipeline for inference
     """
     try:
-        print(f" Starting preprocessing for ticket: {ticket_data.get('incident_type', 'Unknown')}")
+        print(f"🚀 Starting preprocessing for ticket: {ticket_data.get('incident_type', 'Unknown')}")
         
         # Load expected features
         expected_features = load_expected_features()
         if expected_features is None:
             raise ValueError("Cannot load expected features. Run training pipeline first.")
         
-        print(f" Expected features: {len(expected_features)}")
+        print(f"📋 Expected features: {len(expected_features)}")
         
         # Convert input to proper DataFrame format
         df = create_minimal_dataframe(ticket_data)
-        print(f" Created DataFrame with shape: {df.shape}")
-        print(f"Columns: {list(df.columns)}")
+        print(f"📊 Created DataFrame with shape: {df.shape}")
         
         # Run preprocessing pipeline
         X = run_inference_preprocessing(df)
-        print(f" After preprocessing: {X.shape}")
+        print(f"📊 After preprocessing: {X.shape}")
         
         # Align with training features
         X_aligned = align_features_with_training(X, expected_features)
         
-        print("Preprocessing completed successfully!")
+        print("✅ Preprocessing completed successfully!")
         return X_aligned
         
     except Exception as e:
-        print(f" Preprocessing failed: {e}")
+        print(f"❌ Preprocessing failed: {e}")
         import traceback
         traceback.print_exc()
         raise
@@ -315,6 +396,9 @@ def predict_with_full_analysis(model, ticket_data, threshold=0.75):
     try:
         print("🔍 Starting full prediction analysis...")
         
+        # Validate model first
+        validate_model(model)
+        
         # Preprocess the ticket
         X = preprocess_for_prediction(ticket_data)
         
@@ -324,10 +408,14 @@ def predict_with_full_analysis(model, ticket_data, threshold=0.75):
         )
         
         # Get standard prediction for comparison
-        standard_prediction = model.predict(X)[0] if hasattr(model, 'predict') else predictions[0]
+        try:
+            standard_prediction = model.predict(X)[0]
+        except Exception as e:
+            print(f"⚠️ Standard prediction failed: {e}")
+            standard_prediction = predictions[0]
         
         # Risk assessment
-        probability = probabilities[0] if probabilities is not None else 0.5
+        probability = probabilities[0] if probabilities is not None else None
         risk_info = get_risk_assessment(probability, threshold)
         
         # Compile full analysis
@@ -351,8 +439,8 @@ def predict_with_full_analysis(model, ticket_data, threshold=0.75):
             'recommendation': {
                 'action': risk_info['recommendation'],
                 'priority': risk_info['suggested_priority'],
-                'monitoring_required': probability >= 0.4,
-                'escalation_required': probability >= threshold
+                'monitoring_required': (probability or 0) >= 0.4,
+                'escalation_required': (probability or 0) >= threshold
             }
         }
         
@@ -361,98 +449,90 @@ def predict_with_full_analysis(model, ticket_data, threshold=0.75):
         
     except Exception as e:
         print(f"❌ Full prediction analysis failed: {e}")
+        import traceback
+        traceback.print_exc()
         raise
-
-def load_model_with_threshold(model_path):
-    """
-    Load model that was saved with threshold information
-    """
-    import joblib
-    try:
-        model_info = joblib.load(model_path)
-        if isinstance(model_info, dict) and 'model' in model_info:
-            return model_info['model'], model_info.get('decision_threshold', 0.75)
-        else:
-            # Old format - just the model
-            return model_info, 0.75  # Default to conservative threshold
-    except Exception as e:
-        print(f"❌ Error loading model: {e}")
-        return None, None
 
 # Test the preprocessing with conservative threshold
 if __name__ == "__main__":
     print("🧪 Testing preprocessing pipeline with conservative threshold...")
     
-    # Test data - should be low risk
-    test_ticket_low_risk = {
-        "created_date": "2024-01-15 14:00:00",
-        "incident_type": "Request",
-        "priority": "P4",
-        "category": "Software",
-        "status": "Open",
-        "impact_level": "Low",
-        "customer_segment": "Consumer",
-        "contract_type": "Standard",
-        "escalation_level": "Level 1"
-    }
+    # Test model loading first
+    print("\n🔍 Testing model loading...")
+    model = load_model_safely("models/best_rf_model.pkl")
     
-    # Test data - should be high risk
-    test_ticket_high_risk = {
-        "created_date": "2024-01-15 23:30:00",  # After hours
+    if model is None:
+        print("❌ Could not load model, testing preprocessing only...")
+        
+        # Try alternative model paths
+        alternative_paths = [
+            "models/best_xgb_model.pkl",
+            "models/rf_model.pkl",
+            "models/xgb_model.pkl"
+        ]
+        
+        for path in alternative_paths:
+            if os.path.exists(path):
+                print(f"🔍 Trying alternative path: {path}")
+                model = load_model_safely(path)
+                if model is not None:
+                    break
+    
+    if model is not None:
+        print(f"✅ Model loaded successfully: {type(model).__name__}")
+        print(f"📋 Model methods: {[method for method in dir(model) if not method.startswith('_') and callable(getattr(model, method))][:10]}")
+    
+    # Test data for "Already Resolved P2 Ticket" scenario
+    test_ticket_resolved = {
+        "created_date": "2024-01-14 10:00:00",
         "incident_type": "Incident",
-        "priority": "P1",
-        "category": "Hardware",
-        "status": "Open",
-        "impact_level": "High",
+        "priority": "P2",
+        "category": "Software",
+        "status": "Resolved",  # This is the key - already resolved
+        "escalation_level": "Level 1",
+        "service_name": "Internet",
+        "service_category": "Core Network",
         "customer_segment": "Enterprise",
-        "contract_type": "Premium",
-        "escalation_level": "Level 3",
-        "reopened_count": 2
+        "contract_type": "Standard",
+        "region": "East",
+        "business_unit": "Corporate",
+        "technician_skill_level": "Senior",
+        "ticket_source": "Portal",
+        "impact_level": "Medium",
+        "reopened_count": 0,
+        "change_request_linked": "No",
+        "problem_ticket_linked": "No"
     }
     
     try:
         # Test preprocessing only
-        print("\n📋 Testing LOW RISK ticket preprocessing:")
-        result_low = preprocess_for_prediction(test_ticket_low_risk)
-        print(f"✅ Low risk test successful! Shape: {result_low.shape}")
+        print("\n📋 Testing 'Already Resolved P2 Ticket' preprocessing:")
+        result = preprocess_for_prediction(test_ticket_resolved)
+        print(f"✅ Preprocessing successful! Shape: {result.shape}")
         
-        print("\n📋 Testing HIGH RISK ticket preprocessing:")
-        result_high = preprocess_for_prediction(test_ticket_high_risk)
-        print(f"✅ High risk test successful! Shape: {result_high.shape}")
-        
-        print(f"\n📊 Sample features: {list(result_low.columns)[:10]}")
-        print(f"📈 Sample values (low risk): {result_low.iloc[0, :5].tolist()}")
-        print(f"📈 Sample values (high risk): {result_high.iloc[0, :5].tolist()}")
-        
-        # Test threshold functionality (mock)
-        print("\n🎯 Testing threshold functionality...")
-        
-        class MockModel:
-            def predict_proba(self, X):
-                # Mock probabilities - low risk ticket gets low probability
-                if len(X) == 1:
-                    return np.array([[0.8, 0.2]])  # Low probability of breach
-                return np.array([[0.3, 0.7]])  # High probability of breach
+        # Test with model if available
+        if model is not None:
+            print("\n🎯 Testing full analysis with resolved ticket...")
             
-            def predict(self, X):
-                proba = self.predict_proba(X)
-                return (proba[:, 1] > 0.5).astype(int)
-        
-        mock_model = MockModel()
-        
-        # Test conservative threshold
-        predictions, probabilities, threshold_info = predict_with_conservative_threshold(
-            mock_model, result_low, threshold=0.75
-        )
-        
-        print(f"📊 Mock prediction results:")
-        print(f"   Probability: {probabilities[0]:.3f}")
-        print(f"   Conservative prediction: {predictions[0]}")
-        print(f"   Threshold info: {threshold_info}")
-        
-        # Test risk assessment
-        risk_info = get_risk_assessment(probabilities[0], threshold=0.75)
-        print(f"📊 Risk assessment: {risk_info['risk_level']} - {risk_info['recommendation']}")
+            try:
+                analysis = predict_with_full_analysis(model, test_ticket_resolved, threshold=0.75)
+                print(f"✅ Analysis successful!")
+                print(f"   Conservative prediction: {analysis['predictions']['conservative_prediction']}")
+                print(f"   Standard prediction: {analysis['predictions']['standard_prediction']}")
+                print(f"   Risk level: {analysis['risk_assessment']['risk_level']}")
+                print(f"   Probability: {analysis['predictions']['probability']}")
+                print(f"   Status: {analysis['ticket_info']['status']}")
+                
+                # For resolved tickets, prediction should typically be 0 (no breach)
+                if analysis['predictions']['conservative_prediction'] == 0:
+                    print("✅ Correct prediction for resolved ticket!")
+                else:
+                    print("⚠️ Unexpected prediction for resolved ticket")
+                    
+            except Exception as e:
+                print(f"❌ Full analysis failed: {e}")
+                import traceback
+                traceback.print_exc()
         
     except Exception as e:
         print(f"\n❌ Test failed: {e}")
